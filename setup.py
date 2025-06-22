@@ -18,8 +18,59 @@ def get_platform_info():
         'system': system
     }
 
+def check_and_install_venv():
+    """检查并安装venv模块（Linux）"""
+    platform_info = get_platform_info()
+    
+    if platform_info['is_linux']:
+        # 检查是否可以导入venv
+        try:
+            import venv
+            return True
+        except ImportError:
+            print("\n检测到缺少python3-venv包...")
+            
+            # 获取Python版本
+            python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+            
+            # 尝试自动安装
+            print(f"尝试安装python{python_version}-venv...")
+            
+            # 检查是否有sudo权限
+            try:
+                # 首先更新包列表
+                subprocess.run(["sudo", "apt", "update"], check=True)
+                # 安装venv包
+                result = subprocess.run(
+                    ["sudo", "apt", "install", "-y", f"python{python_version}-venv"],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0:
+                    print("✓ python3-venv安装成功！")
+                    return True
+                else:
+                    print(f"安装失败: {result.stderr}")
+            except subprocess.CalledProcessError:
+                pass
+            
+            # 如果自动安装失败，提供手动安装指令
+            print("\n请手动安装python3-venv包：")
+            print(f"  Ubuntu/Debian: sudo apt install python{python_version}-venv")
+            print(f"  CentOS/RHEL: sudo yum install python3-devel")
+            print(f"  Fedora: sudo dnf install python3-devel")
+            print("\n安装完成后，请重新运行此脚本。")
+            return False
+    
+    return True
+
 def create_virtual_env():
     """创建虚拟环境"""
+    # 先检查Linux系统是否有venv
+    if not check_and_install_venv():
+        sys.exit(1)
+    
     print("正在创建虚拟环境...")
     subprocess.check_call([sys.executable, "-m", "venv", "venv"])
     
@@ -67,6 +118,31 @@ def test_import(python_exe, module_name):
     except:
         return False
 
+def check_system_dependencies():
+    """检查系统依赖（Linux）"""
+    platform_info = get_platform_info()
+    
+    if platform_info['is_linux']:
+        print("\n检查系统依赖...")
+        
+        # 检查是否安装了portaudio（pyaudio需要）
+        try:
+            result = subprocess.run(["pkg-config", "--exists", "portaudio-2.0"], capture_output=True)
+            if result.returncode != 0:
+                print("\n⚠ 检测到缺少portaudio库（pyaudio需要）")
+                print("请安装：sudo apt-get install portaudio19-dev")
+        except:
+            pass
+        
+        # 检查是否安装了ffmpeg（音频处理可能需要）
+        try:
+            result = subprocess.run(["which", "ffmpeg"], capture_output=True)
+            if result.returncode != 0:
+                print("\n⚠ 建议安装ffmpeg以获得更好的音频支持")
+                print("请安装：sudo apt-get install ffmpeg")
+        except:
+            pass
+
 def install_pytorch(python_exe, pip_exe, platform_info):
     """专门安装PyTorch及相关组件"""
     print("\n2. 安装 PyTorch 套件...")
@@ -78,19 +154,18 @@ def install_pytorch(python_exe, pip_exe, platform_info):
     
     # 根据平台选择安装命令
     if platform_info['is_windows']:
-        # Windows使用CPU版本，避免CUDA相关问题
+        # Windows使用CPU版本
         install_commands = [
             [pip_exe, "install", "torch==2.0.1+cpu", "torchvision==0.15.2+cpu", "torchaudio==2.0.2+cpu", 
              "-f", "https://download.pytorch.org/whl/torch_stable.html"],
-            # 备用方案
             [pip_exe, "install", "torch", "torchvision", "torchaudio", 
              "--index-url", "https://download.pytorch.org/whl/cpu"]
         ]
     else:
-        # Linux/Mac
+        # Linux/Mac - 使用CPU版本以减小体积
         install_commands = [
-            [pip_exe, "install", "torch", "torchvision", "torchaudio"],
-            # 备用方案：指定版本
+            [pip_exe, "install", "torch", "torchvision", "torchaudio", 
+             "--index-url", "https://download.pytorch.org/whl/cpu"],
             [pip_exe, "install", "torch==2.0.1", "torchvision==0.15.2", "torchaudio==2.0.2"]
         ]
     
@@ -142,6 +217,10 @@ def install_all_dependencies(python_exe, pip_exe):
     """安装所有依赖"""
     platform_info = get_platform_info()
     
+    # 检查系统依赖
+    if platform_info['is_linux']:
+        check_system_dependencies()
+    
     # 升级pip
     print("\n1. 升级pip...")
     try:
@@ -187,18 +266,12 @@ def install_all_dependencies(python_exe, pip_exe):
     # pyaudio可能需要特殊处理
     print(f"   安装 pyaudio...")
     try:
-        if platform_info['is_windows']:
-            # Windows下先尝试直接安装
-            subprocess.check_call([pip_exe, "install", "pyaudio"])
-        else:
-            # Linux/Mac可能需要系统依赖
-            print("     注意：Linux/Mac可能需要先安装系统依赖")
-            print("     Ubuntu/Debian: sudo apt-get install portaudio19-dev")
-            print("     Mac: brew install portaudio")
-            subprocess.check_call([pip_exe, "install", "pyaudio"])
+        subprocess.check_call([pip_exe, "install", "pyaudio"])
         print(f"   ✓ pyaudio")
     except:
         print(f"   ✗ pyaudio 安装失败（语音输入可能受影响）")
+        if platform_info['is_linux']:
+            print("     提示：请先安装 sudo apt-get install portaudio19-dev")
     
     # 安装dashscope
     print(f"   安装 dashscope...")
@@ -283,7 +356,6 @@ def run_program(python_exe):
     if main_script:
         print(f"\n正在运行: {main_script}")
         try:
-            # 使用subprocess.call运行，这样可以正确处理所有平台
             result = subprocess.call([python_exe, main_script])
             if result != 0:
                 print(f"\n程序退出，返回码: {result}")
