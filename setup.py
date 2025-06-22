@@ -65,6 +65,48 @@ def check_and_install_venv():
     
     return True
 
+def ensure_pip(python_exe):
+    """确保pip已安装"""
+    print("检查pip...")
+    
+    # 检查pip是否存在
+    try:
+        subprocess.run([python_exe, "-m", "pip", "--version"], 
+                      capture_output=True, check=True)
+        print("✓ pip已安装")
+        return True
+    except:
+        print("pip未安装，正在安装...")
+        
+    # 尝试使用ensurepip安装
+    try:
+        subprocess.run([python_exe, "-m", "ensurepip", "--default-pip"], 
+                      check=True)
+        print("✓ pip安装成功")
+        return True
+    except:
+        print("ensurepip失败，尝试其他方法...")
+    
+    # 下载get-pip.py
+    try:
+        import urllib.request
+        print("下载get-pip.py...")
+        urllib.request.urlretrieve(
+            "https://bootstrap.pypa.io/get-pip.py", 
+            "get-pip.py"
+        )
+        
+        # 运行get-pip.py
+        subprocess.run([python_exe, "get-pip.py"], check=True)
+        
+        # 清理
+        os.remove("get-pip.py")
+        print("✓ pip安装成功")
+        return True
+    except Exception as e:
+        print(f"pip安装失败: {e}")
+        return False
+
 def create_virtual_env():
     """创建虚拟环境"""
     # 先检查Linux系统是否有venv
@@ -72,15 +114,31 @@ def create_virtual_env():
         sys.exit(1)
     
     print("正在创建虚拟环境...")
-    subprocess.check_call([sys.executable, "-m", "venv", "venv"])
     
+    # 创建虚拟环境，确保包含pip
     platform_info = get_platform_info()
+    if platform_info['is_linux']:
+        # Linux下明确指定--system-site-packages以避免某些问题
+        subprocess.check_call([sys.executable, "-m", "venv", "venv", "--without-pip"])
+    else:
+        subprocess.check_call([sys.executable, "-m", "venv", "venv"])
+    
+    # 获取路径
     if platform_info['is_windows']:
         python_exe = os.path.abspath(os.path.join("venv", "Scripts", "python.exe"))
         pip_exe = os.path.abspath(os.path.join("venv", "Scripts", "pip.exe"))
     else:
         python_exe = os.path.abspath(os.path.join("venv", "bin", "python"))
         pip_exe = os.path.abspath(os.path.join("venv", "bin", "pip"))
+    
+    # 确保pip已安装
+    if not os.path.exists(pip_exe):
+        print("虚拟环境中未找到pip，正在安装...")
+        if ensure_pip(python_exe):
+            print("✓ pip准备就绪")
+        else:
+            print("✗ pip安装失败")
+            sys.exit(1)
     
     return python_exe, pip_exe
 
@@ -103,6 +161,16 @@ def get_venv_paths():
     else:
         python_exe = os.path.abspath(os.path.join("venv", "bin", "python"))
         pip_exe = os.path.abspath(os.path.join("venv", "bin", "pip"))
+    
+    # 验证pip存在
+    if not os.path.exists(pip_exe):
+        print("虚拟环境中未找到pip，尝试修复...")
+        if ensure_pip(python_exe):
+            # 重新获取pip路径
+            if platform_info['is_windows']:
+                pip_exe = os.path.abspath(os.path.join("venv", "Scripts", "pip.exe"))
+            else:
+                pip_exe = os.path.abspath(os.path.join("venv", "bin", "pip"))
     
     return python_exe, pip_exe
 
@@ -147,10 +215,18 @@ def install_pytorch(python_exe, pip_exe, platform_info):
     """专门安装PyTorch及相关组件"""
     print("\n2. 安装 PyTorch 套件...")
     
+    # 检查pip是否存在
+    if not os.path.exists(pip_exe):
+        print("错误：pip不存在！")
+        return False
+    
     # 首先清理可能存在的损坏安装
     print("   清理旧版本...")
     for pkg in ["torch", "torchvision", "torchaudio"]:
-        subprocess.run([pip_exe, "uninstall", "-y", pkg], capture_output=True)
+        try:
+            subprocess.run([pip_exe, "uninstall", "-y", pkg], capture_output=True, check=True)
+        except:
+            pass
     
     # 根据平台选择安装命令
     if platform_info['is_windows']:
@@ -221,10 +297,23 @@ def install_all_dependencies(python_exe, pip_exe):
     if platform_info['is_linux']:
         check_system_dependencies()
     
+    # 确保pip存在
+    if not os.path.exists(pip_exe):
+        print("\npip不存在，尝试修复...")
+        if not ensure_pip(python_exe):
+            print("无法安装pip，退出")
+            return False
+        # 重新获取pip路径
+        if platform_info['is_windows']:
+            pip_exe = os.path.abspath(os.path.join("venv", "Scripts", "pip.exe"))
+        else:
+            pip_exe = os.path.abspath(os.path.join("venv", "bin", "pip"))
+    
     # 升级pip
     print("\n1. 升级pip...")
     try:
         subprocess.check_call([python_exe, "-m", "pip", "install", "--upgrade", "pip"])
+        print("   ✓ pip升级成功")
     except:
         print("   pip升级失败，使用当前版本继续")
     
